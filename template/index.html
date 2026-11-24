@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isometric Pixel Office — starter</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f3e9d2; font-family: system-ui, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #hud { position: fixed; left: 12px; top: 12px; background: rgba(255,255,255,.92); border: 2px solid #222; border-radius: 10px; padding: 10px 12px; max-width: 260px; }
+  #hud h1 { font-size: 15px; margin: 0 0 6px; }
+  #hud p { font-size: 12px; margin: 4px 0; color: #444; }
+  #hud button { margin: 4px 4px 0 0; padding: 6px 10px; border: 2px solid #222; border-radius: 8px; background: #fff; cursor: pointer; font-weight: 600; }
+  #hud button.active { background: #ffd23f; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">
+  <h1>Kantor Isometrik — starter</h1>
+  <p>Gerakan: <b id="moveName">Ombak</b> · <span id="danceState">Menari</span></p>
+  <p>Seret untuk orbit, scroll untuk zoom.</p>
+  <button id="btnOmbak" class="active">Ombak</button>
+  <button id="btnPutar">Putar</button>
+  <button id="btnPause">Jeda Tari</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---- Rendering tajam: resolusi penuh, tanpa downscale (lihat references/rendering.md)
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(app.clientWidth, app.clientHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf3e9d2);
+
+// Kamera isometrik (ortografik): azimuth 45, elevasi ~35
+const aspect = app.clientWidth / app.clientHeight;
+const view = 11;
+const camera = new THREE.OrthographicCamera(-view * aspect, view * aspect, view, -view, 0.1, 100);
+camera.position.set(14, 14, 14);
+camera.lookAt(0, 0, 0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0, 0);
+controls.maxPolarAngle = Math.PI / 2.2;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(8, 16, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+scene.add(sun);
+
+// ---- Tekstur kanvas: filter linear + anisotropi (tajam, bukan NearestFilter)
+function canvasTexture(draw, w = 256, h = 256) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.anisotropy = 8;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const floorTex = canvasTexture((g, w, h) => {
+  g.fillStyle = '#e8c890'; g.fillRect(0, 0, w, h);
+  for (let y = 0; y < 8; y++) {
+    g.fillStyle = y % 2 ? '#dfc083' : '#ecd096';
+    g.fillRect(0, y * 32, w, 30);
+    g.fillStyle = '#b99a62';
+    g.fillRect(0, y * 32 + 30, w, 2);
+    g.fillRect(((y * 97) % w), y * 32, 2, 30);
+  }
+});
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(3, 3);
+
+function box(w, h, d, color, x, y, z, opts = {}) {
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...opts })
+  );
+  m.position.set(x, y, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m); return m;
+}
+
+// ---- Ruangan: lantai, dinding, perabot (lihat references/room-layout.md)
+const floor = new THREE.Mesh(new THREE.BoxGeometry(12, 0.3, 10),
+  new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.9 }));
+floor.position.y = -0.15; floor.receiveShadow = true; scene.add(floor);
+box(12, 3, 0.3, 0xf5ead0, 0, 1.5, -5);            // dinding belakang
+box(0.3, 3, 10, 0xf5ead0, -6, 1.5, 0);            // dinding kiri
+box(12, 0.3, 10, 0xffffff, 0, 0.15, 0).visible = false; // (pengisi, disembunyikan)
+
+// Whiteboard kiri + meja rapat
+box(3.2, 1.6, 0.15, 0xffffff, -4.2, 1.9, -4.8);
+box(3.4, 0.2, 1.4, 0xffffff, -3.6, 0.8, -2.6);    // meja rapat
+// Cluster 2 meja + CRT di tengah
+for (const [dx, dz] of [[-1.5, 0.5], [1.5, 0.5]]) {
+  box(2, 0.15, 1, 0xffffff, dx, 0.75, dz);         // permukaan meja
+  box(0.15, 0.75, 0.9, 0xd8d8d8, dx - 0.9, 0.38, dz);
+  box(0.15, 0.75, 0.9, 0xd8d8d8, dx + 0.9, 0.38, dz);
+  box(0.7, 0.6, 0.5, 0xf2f2f2, dx, 1.15, dz - 0.15); // monitor CRT
+  box(0.55, 0.4, 0.05, 0x9fd8ff, dx, 1.15, dz + 0.12); // layar
+}
+// Karpet merah di pintu + tanaman
+box(2.4, 0.06, 1.4, 0xc0392b, 0, 0.03, 4.2);
+for (const [x, z] of [[-5.4, 4.2], [5.4, 4.2], [-5.4, -4.2]]) {
+  box(0.5, 0.5, 0.5, 0xb5651d, x, 0.25, z);
+  const bush = new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0x3e9b4f, roughness: 0.9 }));
+  bush.position.set(x, 0.85, z); bush.castShadow = true; scene.add(bush);
+}
+// Tumpukan kertas + peti di kanan
+box(0.9, 0.9, 0.9, 0xc9a06a, 4.8, 0.45, -2.5);
+box(0.8, 0.25, 0.8, 0xffffff, 4.8, 1.0, -2.5);
+box(0.8, 0.25, 0.8, 0xffffff, 4.8, 1.25, -2.5);
+
+// ---- Luar: jalan + mobil + gedung tetangga berbalkon
+box(12, 0.2, 3, 0x8a8f98, 0, -0.1, -6.8);          // jalan
+const car = new THREE.Group();
+car.add(new THREE.Mesh(new THREE.BoxGeometry(2, 0.5, 1),
+  new THREE.MeshStandardMaterial({ color: 0x2e6fd8, roughness: 0.4 })));
+car.children[0].position.y = 0.45; car.children[0].castShadow = true;
+for (const [x, z] of [[-0.7, 0.45], [0.7, 0.45], [-0.7, -0.45], [0.7, -0.45]]) {
+  const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.15, 12),
+    new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  wheel.rotation.x = Math.PI / 2; wheel.position.set(x, 0.22, z); car.add(wheel);
+}
+car.position.set(-2, 0, -6.8); scene.add(car);
+box(6, 5, 0.5, 0x9aa0a8, 3.5, 2.5, -9.5);          // gedung tetangga
+box(3, 0.25, 1.2, 0x7d838c, 3.5, 1.6, -9.0);       // balkon
+box(1.2, 1.6, 0.1, 0x7ec3f0, 2.6, 3.4, -9.2);      // jendela biru
+box(1.2, 1.6, 0.1, 0x7ec3f0, 4.6, 3.4, -9.2);
+
+// ---- Hero chibi (lihat references/dance-choreography.md)
+const hero = new THREE.Group();
+const skin = new THREE.MeshStandardMaterial({ color: 0xffd9b3, roughness: 0.8 });
+const jacket = new THREE.MeshStandardMaterial({ color: 0x2e6fd8, roughness: 0.85 });
+const capMat = new THREE.MeshStandardMaterial({ color: 0xd23b2e, roughness: 0.85 });
+const head = new THREE.Group();
+const skull = new THREE.Mesh(new THREE.SphereGeometry(0.42, 20, 16), skin);
+skull.position.y = 0.42; skull.castShadow = true; head.add(skull);
+const cap = new THREE.Mesh(new THREE.SphereGeometry(0.44, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), capMat);
+cap.position.y = 0.5; head.add(cap);
+head.position.y = 0.95; hero.add(head);
+const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.55, 0.4), jacket);
+body.position.y = 0.55; body.castShadow = true; hero.add(body);
+function limb(color) {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 0.18),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
+  m.position.y = -0.25; m.castShadow = true; g.add(m); return g;
+}
+const armL = limb(0x2e6fd8); armL.position.set(-0.4, 0.78, 0); hero.add(armL);
+const armR = limb(0x2e6fd8); armR.position.set(0.4, 0.78, 0); hero.add(armR);
+const legL = limb(0x333333); legL.position.set(-0.16, 0.3, 0); hero.add(legL);
+const legR = limb(0x333333); legR.position.set(0.16, 0.3, 0); hero.add(legR);
+hero.position.set(0, 0, 1.8); scene.add(hero);
+
+// ---- Koreografi keyframe (BPM 118; loop mulus)
+const BPM = 118, BEAT = 60 / BPM;
+let move = 'ombak', dancing = true;
+function dance(t) {
+  if (!dancing) return;
+  const b = (t / BEAT) % 4; // 4 ketukan per loop
+  if (move === 'ombak') {
+    const s = Math.sin(b * Math.PI / 2);
+    hero.rotation.z = s * 0.12;
+    hero.position.x = s * 0.25;
+    armL.rotation.z = 0.5 + s * 0.5; armR.rotation.z = -0.5 - s * 0.5;
+    head.rotation.z = -s * 0.15;
+    legL.rotation.x = s * 0.3; legR.rotation.x = -s * 0.3;
+  } else { // putar
+    hero.rotation.y = b * Math.PI / 2;
+    hero.rotation.z = 0;
+    armL.rotation.z = 2.4; armR.rotation.z = -2.4;
+    const hop = Math.abs(Math.sin(b * Math.PI / 2)) * 0.15;
+    hero.position.y = hop;
+    legL.rotation.x = 0.2; legR.rotation.x = -0.2;
+  }
+}
+
+// ---- Kontrol
+const moveName = document.getElementById('moveName');
+const danceState = document.getElementById('danceState');
+function setMove(m) {
+  move = m; hero.rotation.y = 0; hero.rotation.z = 0; hero.position.y = 0;
+  moveName.textContent = m === 'ombak' ? 'Ombak' : 'Putar';
+  document.getElementById('btnOmbak').classList.toggle('active', m === 'ombak');
+  document.getElementById('btnPutar').classList.toggle('active', m === 'putar');
+}
+document.getElementById('btnOmbak').onclick = () => setMove('ombak');
+document.getElementById('btnPutar').onclick = () => setMove('putar');
+document.getElementById('btnPause').onclick = (e) => {
+  dancing = !dancing;
+  danceState.textContent = dancing ? 'Menari' : 'Istirahat';
+  e.target.textContent = dancing ? 'Jeda Tari' : 'Lanjut Tari';
+};
+
+function resize() {
+  const w = app.clientWidth, h = app.clientHeight;
+  camera.left = -view * (w / h); camera.right = view * (w / h);
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', resize);
+
+const clock = new THREE.Clock();
+(function loop() {
+  requestAnimationFrame(loop);
+  dance(clock.getElapsedTime());
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
